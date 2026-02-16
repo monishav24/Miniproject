@@ -26,13 +26,27 @@ async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit
 
 
 async def init_db():
-    """Create all tables."""
+    """Create all tables with fallback handling."""
+    global engine, async_session
     from edge_rsu.database.models import Base
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    logger.info("Database tables created")
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized (PostgreSQL)")
+    except Exception as exc:
+        logger.warning("PostgreSQL connection failed (%s), falling back to SQLite", exc)
+        # Re-initialize engine with SQLite
+        sqlite_url = "sqlite+aiosqlite:///./smartv2x_edge.db"
+        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+        engine = create_async_engine(sqlite_url)
+        global async_session
+        async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+        
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        logger.info("Database tables initialized (SQLite)")
 
 
-async def get_session() -> AsyncSession:
+async def get_db() -> AsyncSession:
     async with async_session() as session:
         yield session

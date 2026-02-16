@@ -144,5 +144,7 @@ else:
 
 if __name__ == "__main__":
     import uvicorn
+    # Use PORT from environment (required for Render)
+    port = int(os.environ.get("PORT", 3000))
     # Listen on 0.0.0.0 for sharing
-    uvicorn.run(app, host="0.0.0.0", port=3000)
+    uvicorn.run(app, host="0.0.0.0", port=port)

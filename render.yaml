@@ -1,28 +1,10 @@
 services:
   - type: web
-    name: smartv2x-ultra
+    name: smartv2x-app
     env: python
     buildCommand: "./build.sh"
     startCommand: "python unified_server.py"
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      - key: DATABASE_URL
-        fromDatabase:
-          name: smartv2x-db
-          property: connectionString
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: smartv2x-redis
-          property: connectionString
 
-databases:
-  - name: smartv2x-db
-    databaseName: smartv2x_edge
-    user: smartv2x
-
-services:
-  - type: redis
-    name: smartv2x-redis
-    ipAllowList: [] # internal only

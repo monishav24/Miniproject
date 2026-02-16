@@ -6,7 +6,9 @@ set -o errexit
 echo "Building Dashboard..."
 cd dashboard
 npm install
-npm run build
+# Fix permissions for binaries if needed
+chmod +x node_modules/.bin/vite || true
+npx vite build
 cd ..
 
 # Install python dependencies

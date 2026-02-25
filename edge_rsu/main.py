@@ -16,7 +16,6 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from edge_rsu.config import settings
-from edge_rsu.config import settings
 from edge_rsu.api import vehicle_router, health_router, ws_router, routes_auth
 from edge_rsu.middleware.rate_limiter import RateLimiterMiddleware
 from edge_rsu.cache.redis_client import RedisCache

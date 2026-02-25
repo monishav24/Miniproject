@@ -4,64 +4,18 @@ SmartV2X-CP Ultra — Health & Analytics Routes
 GET /api/health           — system health check
 GET /api/analytics        — basic analytics summary
 GET /api/collision-history — recent collision events
-POST /api/auth/login      — JWT login endpoint
 """
 
 import time
 import logging
-from typing import Optional
-from pydantic import BaseModel
 
-from fastapi import APIRouter, HTTPException, status
-
-from edge_rsu.auth.jwt_handler import (
-    authenticate_user,
-    create_access_token,
-)
-from edge_rsu.config import settings
+from fastapi import APIRouter
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["System"])
 
 # ── In-memory collision log ───────────────────────────────
 _collision_events: list = []
-
-
-# ── Schemas ───────────────────────────────────────────────
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-class LoginResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int
-    role: str
-    name: str
-
-
-# ── Auth endpoint ─────────────────────────────────────────
-@router.post("/api/auth/login", response_model=LoginResponse)
-async def login(req: LoginRequest):
-    """Authenticate and return a JWT."""
-    user = authenticate_user(req.username, req.password)
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials",
-        )
-    token = create_access_token({
-        "sub": user["username"],
-        "role": user["role"],
-        "name": user["name"],
-    })
-    logger.info("User logged in: %s (role=%s)", user["username"], user["role"])
-    return LoginResponse(
-        access_token=token,
-        expires_in=settings.JWT_EXPIRY_SECONDS,
-        role=user["role"],
-        name=user["name"],
-    )
 
 
 # ── Health ────────────────────────────────────────────────

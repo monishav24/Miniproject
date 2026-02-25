@@ -1,49 +1,46 @@
 /**
  * SmartV2X-CP Ultra — Alert Panel
- * Displays real-time collision alerts sorted by severity.
+ * Collision alerts with risk-level-based entrance animations.
  */
 import React from 'react';
-
-const RISK_ICONS = {
-    HIGH: '🔴',
-    MEDIUM: '🟡',
-    LOW: '🟢',
-};
 
 export default function AlertPanel({ alerts = [] }) {
     if (alerts.length === 0) {
         return (
             <div className="empty-state">
                 <div className="icon">🛡️</div>
-                <p>No active alerts</p>
-                <p style={{ fontSize: 12 }}>System monitoring active</p>
+                <p>No collision alerts — all clear!</p>
             </div>
         );
     }
 
     return (
-        <div style={{ maxHeight: 320, overflowY: 'auto' }}>
-            {alerts.slice(0, 20).map((alert, idx) => {
-                const level = alert.risk?.level || alert.risk_level || 'LOW';
-                const time = alert.timestamp
-                    ? new Date(alert.timestamp * 1000).toLocaleTimeString()
-                    : '';
+        <div className="alert-list" style={{ maxHeight: 300, overflowY: 'auto' }}>
+            {alerts.map((alert, idx) => {
+                const level = (alert.risk?.level || 'LOW').toUpperCase();
+                const animClass =
+                    level === 'HIGH' ? 'alert-enter-high' :
+                        level === 'MEDIUM' ? 'alert-enter-medium' : 'alert-enter-low';
 
                 return (
-                    <div key={idx} className="alert-item">
+                    <div key={idx} className={`alert-item ${animClass}`}
+                        style={{ animationDelay: `${idx * 0.05}s` }}>
                         <div className={`alert-icon ${level.toLowerCase()}`}>
-                            {RISK_ICONS[level] || '⚪'}
+                            {level === 'HIGH' ? '🚨' : level === 'MEDIUM' ? '⚠️' : 'ℹ️'}
                         </div>
                         <div className="alert-content">
                             <div className="title">
-                                {level} Risk — {alert.vehicle_id || alert.data?.vehicle_id || 'Vehicle'}
+                                {level} Risk — {alert.vehicle_id || 'Unknown'}
                             </div>
                             <div className="details">
-                                {alert.risk?.ttc != null && `TTC: ${alert.risk.ttc.toFixed(1)}s · `}
-                                {alert.risk?.min_distance != null && `Dist: ${alert.risk.min_distance.toFixed(1)}m`}
-                                {alert.details || ''}
+                                Score: {alert.risk?.score?.toFixed(3) || 'N/A'}
+                                {alert.risk?.ttc != null && ` • TTC: ${alert.risk.ttc.toFixed(1)}s`}
                             </div>
-                            {time && <div className="time">{time}</div>}
+                            <div className="time">
+                                {alert.timestamp
+                                    ? new Date(alert.timestamp * 1000).toLocaleTimeString()
+                                    : 'Just now'}
+                            </div>
                         </div>
                     </div>
                 );

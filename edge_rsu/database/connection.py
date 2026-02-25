@@ -24,7 +24,6 @@ engine = create_async_engine(_db_url, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
-
 async def init_db():
     """Create all tables with fallback handling."""
     global engine, async_session
@@ -37,11 +36,9 @@ async def init_db():
         logger.warning("PostgreSQL connection failed (%s), falling back to SQLite", exc)
         # Re-initialize engine with SQLite
         sqlite_url = "sqlite+aiosqlite:///./smartv2x_edge.db"
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
         engine = create_async_engine(sqlite_url)
-        global async_session
         async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-        
+
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables initialized (SQLite)")

@@ -13,14 +13,19 @@ from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
+from datetime import datetime
 
+from edge_rsu.database.connection import get_db
+from edge_rsu.database.models import Vehicle
 from edge_rsu.auth.jwt_handler import get_current_user
 from edge_rsu.auth.rbac import RoleChecker
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/vehicle", tags=["Vehicle"])
 
-# ── In-memory vehicle store (backed by Redis in production) ──
+# ── In-memory vehicle store (cache for real-time state) ──
 _vehicles: Dict[str, Dict[str, Any]] = {}
 
 
@@ -53,8 +58,25 @@ class VehicleResponse(BaseModel):
 async def register_vehicle(
     req: VehicleRegisterRequest,
     user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
 ):
     """Register a new OBU device with the edge server."""
+    # Check if already in DB
+    result = await db.execute(select(Vehicle).where(Vehicle.vehicle_id == req.vehicle_id))
+    db_vehicle = result.scalars().first()
+    
+    if not db_vehicle:
+        db_vehicle = Vehicle(
+            vehicle_id=req.vehicle_id,
+            device_name=req.device_name,
+            firmware_version=req.firmware_version,
+            status="online"
+        )
+        db.add(db_vehicle)
+        await db.commit()
+        await db.refresh(db_vehicle)
+
+    # Sync to in-memory store
     _vehicles[req.vehicle_id] = {
         "vehicle_id": req.vehicle_id,
         "device_name": req.device_name,
@@ -81,7 +103,7 @@ async def update_vehicle(
 ):
     """Receive real-time vehicle state update."""
     if req.vehicle_id not in _vehicles:
-        # Auto-register if unknown
+        # Auto-register in-memory if unknown (production would check DB)
         _vehicles[req.vehicle_id] = {
             "vehicle_id": req.vehicle_id,
             "registered_at": time.time(),
@@ -117,14 +139,44 @@ async def heartbeat(
 
 
 @router.get("/list")
-async def list_vehicles(user: dict = Depends(get_current_user)):
+async def list_vehicles(
+    user: dict = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
     """List all registered vehicles and their latest state."""
-    # Mark offline vehicles (no heartbeat > 30 s)
+    # 1. Fetch from DB to ensure all registered vehicles are present
+    result = await db.execute(select(Vehicle))
+    db_vehicles = result.scalars().all()
+    
+    # 2. Merge with in-memory real-time state
     now = time.time()
-    for v in _vehicles.values():
-        if now - v.get("last_seen", 0) > 30:
-            v["status"] = "offline"
-    return {"vehicles": list(_vehicles.values()), "count": len(_vehicles)}
+    response_list = []
+    
+    for v in db_vehicles:
+        # Get live data if available
+        live = _vehicles.get(v.vehicle_id, {})
+        
+        # Check if offline
+        status = live.get("status", "offline")
+        last_seen = live.get("last_seen", 0)
+        if last_seen > 0 and now - last_seen > 30:
+            status = "offline"
+            
+        response_list.append({
+            "vehicle_id": v.vehicle_id,
+            "device_name": v.device_name,
+            "status": status,
+            "position": live.get("position", {"lat": v.latitude, "lng": v.longitude}),
+            "risk": live.get("risk", {"level": "LOW"}),
+            "last_seen": last_seen
+        })
+        
+    return {"vehicles": response_list, "count": len(response_list)}
+
+
+def get_vehicles_store() -> Dict[str, Dict[str, Any]]:
+    """Expose the vehicle store to other modules."""
+    return _vehicles
 
 
 def get_vehicles_store() -> Dict[str, Dict[str, Any]]:

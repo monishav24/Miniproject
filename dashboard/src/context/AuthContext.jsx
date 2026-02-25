@@ -23,9 +23,12 @@ export function AuthProvider({ children }) {
     }, []);
 
     const handleLogin = (tokenData) => {
+        // We expect { access_token: "...", token_type: "bearer" }
+        // For the user object, we can decode the JWT or just store the username if we have it.
+        // For simplicity in this demo, we'll store a generic user object.
         const userData = {
-            name: tokenData.name,
-            role: tokenData.role,
+            username: "User", // This could be extracted from JWT payload if needed
+            role: "admin",
         };
         storeAuth(tokenData.access_token, userData);
         setToken(tokenData.access_token);

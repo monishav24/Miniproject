@@ -54,7 +54,9 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     username = Column(String(64), unique=True, nullable=False)
-    password_hash = Column(String(256), nullable=False)
+    email = Column(String(256), unique=True, nullable=True)
+    password_hash = Column(String(256), nullable=True)  # nullable for Google OAuth users
+    auth_provider = Column(String(16), default="local")  # local / google
     role = Column(String(16), default="viewer")           # admin / operator / viewer / device
     name = Column(String(128), default="")
     is_active = Column(Boolean, default=True)

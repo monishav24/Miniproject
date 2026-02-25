@@ -10,7 +10,16 @@ db_url = settings.DATABASE_URL
 if db_url.startswith("postgresql://"):
     db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(db_url, echo=False)
+# Production-grade engine configuration
+# SSL is required for Render Postgres
+connect_args = {"ssl": "require"} if "postgresql" in db_url else {}
+
+engine = create_async_engine(
+    db_url, 
+    echo=False,
+    pool_pre_ping=True,
+    connect_args=connect_args
+)
 AsyncSessionFactory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def init_db():

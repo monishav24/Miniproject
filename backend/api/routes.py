@@ -6,6 +6,7 @@ from typing import List, Optional, Dict
 from datetime import datetime
 import asyncio
 import os
+import random
 
 from backend.database.connection import get_session
 from backend.database.models import User, Vehicle, TelemetryRecord, RiskAnalysisResult, SimulationRun
@@ -22,7 +23,6 @@ from backend.config import settings
 router = APIRouter()
 
 # Global simulator instance for demo
-# In production/Render, this will need to point to the actual service URL or use internal dispatch
 SIM_URL = os.getenv("V2X_INTERNAL_API", "http://localhost:3000")
 simulator = V2XSimulator(api_url=SIM_URL)
 
@@ -250,3 +250,42 @@ async def get_dashboard_summary(current_user: User = Depends(get_current_user), 
             "Simulation nodes performing as expected"
         ]
     }
+
+# --- Simulation Controls ---
+@router.post("/simulation/start")
+async def start_sim(background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
+    """Starts simulation only for the current user's registered vehicles."""
+    if simulator.is_running:
+        return {"status": "already running"}
+    
+    # 1. Fetch current user's vehicles
+    v_q = await db.execute(select(Vehicle).where(Vehicle.owner_id == current_user.id))
+    vehicles = v_q.scalars().all()
+    
+    if not vehicles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, 
+            detail="No vehicles found. Please register at least one vehicle before launching the swarm."
+        )
+    
+    # 2. Build vehicle list for simulator with initial random positions
+    sim_vehicles = []
+    for v in vehicles:
+        sim_vehicles.append({
+            "id": v.id,
+            "name": v.name,
+            "lat": 37.7749 + (random.random() - 0.5) * 0.05,
+            "lng": -122.4194 + (random.random() - 0.5) * 0.05,
+            "speed": 40.0 + random.random() * 20,
+            "heading": random.randint(0, 359),
+            "acceleration": 0.0
+        })
+    
+    # 3. Launch background task
+    background_tasks.add_task(simulator.start, sim_vehicles)
+    return {"status": f"V2X Swarm launched for {len(sim_vehicles)} registered vehicles."}
+
+@router.post("/simulation/stop")
+async def stop_sim():
+    simulator.stop()
+    return {"status": "simulation terminated"}

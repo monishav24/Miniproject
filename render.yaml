@@ -7,9 +7,7 @@ services:
     startCommand: gunicorn unified_server:app --worker-class uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     envVars:
       - key: DATABASE_URL
-        fromDatabase:
-          name: v2x-db
-          property: connectionString
+        value: postgresql://v2x_db_user:CSaiVuxhyaR04trTrBTtk2Hk8pbQSmx9@dpg-d6fggnq4d50c73ed435g-a/v2x_db
       - key: JWT_SECRET
         generateValue: true
       - key: PORT

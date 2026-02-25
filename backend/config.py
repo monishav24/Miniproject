@@ -1,7 +1,7 @@
 import os
 
 class Settings:
-    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://smartv2x:smartv2x@localhost:5432/smartv2x_edge")
+    DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql://v2x_db_user:CSaiVuxhyaR04trTrBTtk2Hk8pbQSmx9@dpg-d6fggnq4d50c73ed435g-a/v2x_db")
     REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     
     # JWT Config

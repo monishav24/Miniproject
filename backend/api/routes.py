@@ -69,6 +69,15 @@ class VehicleStats(BaseModel):
     avg_unsafe_score: float
     last_communication: Optional[datetime]
 
+class VehicleLocation(BaseModel):
+    id: int
+    name: str
+    latitude: float
+    longitude: float
+    speed: float
+    heading: float
+    collision_probability: float
+
 # --- Auth Routes ---
 @router.post("/auth/register", response_model=Token)
 async def register(user_data: UserRegister, db: AsyncSession = Depends(get_session)):
@@ -113,29 +122,35 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_session)):
     return {"access_token": access_token, "token_type": "bearer"}
 
 # --- Vehicle Routes ---
-@router.get("/vehicles", response_model=List[VehicleOut])
-async def get_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
+@router.get("/vehicles/locations", response_model=List[VehicleLocation])
+async def get_vehicle_locations(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
+    """
+    Returns the latest coordinates and key metrics for all vehicles owned by the user.
+    Optimized for real-time map updates.
+    """
     result = await db.execute(select(Vehicle).where(Vehicle.owner_id == current_user.id))
     vehicles = result.scalars().all()
     
-    vehicle_list = []
+    locations = []
     for v in vehicles:
-        # Get latest telemetry
         t_result = await db.execute(
             select(Telemetry)
             .where(Telemetry.vehicle_id == v.id)
             .order_by(Telemetry.timestamp.desc())
             .limit(1)
         )
-        last_t = t_result.scalars().first()
-        
-        # Pydantic will handle the conversion
-        v_out = VehicleOut.model_validate(v)
-        if last_t:
-            v_out.last_telemetry = TelemetryOut.model_validate(last_t)
-        vehicle_list.append(v_out)
-        
-    return vehicle_list
+        t = t_result.scalars().first()
+        if t:
+            locations.append(VehicleLocation(
+                id=v.id,
+                name=v.name,
+                latitude=t.latitude,
+                longitude=t.longitude,
+                speed=t.speed,
+                heading=t.heading,
+                collision_probability=t.collision_probability
+            ))
+    return locations
 
 @router.post("/vehicles", response_model=VehicleOut)
 async def add_vehicle(vehicle: VehicleCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):

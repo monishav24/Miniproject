@@ -121,6 +121,7 @@ function AIInsightsPanel() {
 export default function Dashboard() {
     const { user, logout } = useAuth();
     const [vehicles, setVehicles] = useState({});
+    const [vehicleLocations, setVehicleLocations] = useState([]);
     const [alerts, setAlerts] = useState([]);
     const [latencyData, setLatencyData] = useState([]);
     const [health, setHealth] = useState({});
@@ -188,7 +189,22 @@ export default function Dashboard() {
         return () => clearInterval(interval);
     }, []);
 
-    // Poll vehicle list
+    // Poll vehicle locations for map
+    useEffect(() => {
+        const fetchLocations = async () => {
+            try {
+                const resp = await fetch(`${API_URL}/backend/api/vehicles/locations`, { headers: authHeaders() });
+                if (resp.ok) {
+                    setVehicleLocations(await resp.json());
+                }
+            } catch { /* ignore */ }
+        };
+        fetchLocations();
+        const interval = setInterval(fetchLocations, 3000); // 3-second refresh
+        return () => clearInterval(interval);
+    }, []);
+
+    // Poll vehicle list for pairing status
     useEffect(() => {
         const fetchVehicles = async () => {
             try {
@@ -202,7 +218,7 @@ export default function Dashboard() {
             } catch { /* ignore */ }
         };
         fetchVehicles();
-        const interval = setInterval(fetchVehicles, 15000);
+        const interval = setInterval(fetchVehicles, 10000);
         return () => clearInterval(interval);
     }, []);
 
@@ -244,7 +260,7 @@ export default function Dashboard() {
                         <h3>🗺️ Live Vehicle Map</h3>
                         <span className="badge badge-live pulse-badge">● LIVE</span>
                     </div>
-                    <VehicleMap vehicles={vehicles} />
+                    <VehicleMap vehicles={vehicleLocations} />
                 </div>
 
                 {/* Right: Alerts */}

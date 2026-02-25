@@ -66,22 +66,19 @@ app.add_middleware(
 )
 
 # ── Mount APIs ──────────────────────────────────────────────
-# Edge Routes (Vehicle, WebSocket) - Served at root / to match dashboard expectations if VITE_API_URL is empty
-app.include_router(vehicle_router)  # /vehicle/...
-app.include_router(edge_health)     # /api/health
-app.include_router(ws_router)       # /ws/live
-# Real Auth Implementation
-from edge_rsu.api import routes_auth
-app.include_router(routes_auth.router, tags=["Auth"])
+# 1. Real Industry-Grade Backend API (Highest Priority)
+app.include_router(backend_api_router) # This provides /telemetry, /auth/login, etc. at root
 
-# AI Analytics
-from edge_rsu.api.routes_analytics import router as analytics_router
-app.include_router(analytics_router, tags=["AI Analytics"])
+# 2. Support/Legacy Edge Routes (If needed)
+app.include_router(edge_health, prefix="/edge")
+app.include_router(ws_router)       # Keep WebSockets for live map updates
 
-# Backend Routes - Mount at /backend or /api/analytics?
-# The original backend was separate. Let's prefix it.
-app.include_router(backend_api_router, prefix="/backend/api")
-app.include_router(backend_health_router, prefix="/backend")
+# AI Analytics (Legacy/Edge)
+# from edge_rsu.api.routes_analytics import router as analytics_router
+# app.include_router(analytics_router, tags=["AI Analytics"])
+
+# Backend Health
+app.include_router(backend_health_router, prefix="/health")
 
 # ── Serve Frontend ──────────────────────────────────────────
 # Check if dist exists

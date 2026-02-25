@@ -3,18 +3,25 @@ import json
 import random
 import requests
 import math
+import os
 from datetime import datetime
 
-# --- Configuration ---
-API_URL = "http://localhost:3000/backend/api/telemetry/live" # Update for production
-VEHICLE_ID = 1 # Update with registered vehicle ID
-SEND_INTERVAL = 1.0 # seconds
+# --- Environment Configuration ---
+# API_URL should point to the telemetry endpoint
+DEFAULT_API = "http://localhost:3000/telemetry"
+API_URL = os.getenv("V2X_API_URL", DEFAULT_API)
+VEHICLE_ID = os.getenv("V2X_VEHICLE_ID", "OBU-PI-01")
+AUTH_TOKEN = os.getenv("V2X_AUTH_TOKEN", "") # Optional JWT
+SEND_INTERVAL = float(os.getenv("V2X_INTERVAL", "1.0"))
 
 class OBUSender:
-    def __init__(self, vehicle_id, api_url):
+    def __init__(self, vehicle_id, api_url, token=None):
         self.vehicle_id = vehicle_id
         self.api_url = api_url
+        self.token = token
         self.session = requests.Session()
+        if token:
+            self.session.headers.update({"Authorization": f"Bearer {token}"})
         
         # State for mock data generation
         self.lat = 37.7749
@@ -24,18 +31,16 @@ class OBUSender:
         
     def generate_mock_telemetry(self):
         """Generates realistic mock GPS and IMU data."""
-        # Update position based on speed and heading
-        # (Very simplified flat-earth projection)
         speed_mps = self.speed / 3.6
+        # Move vehicle based on heading
         self.lat += (speed_mps * math.cos(math.radians(self.heading)) * 0.000009)
         self.lon += (speed_mps * math.sin(math.radians(self.heading)) * 0.000009)
         
-        # Add some jitter to speed and acceleration
-        acceleration = random.uniform(-2.0, 2.0)
-        self.speed = max(0, self.speed + acceleration)
+        acceleration = random.uniform(-1.5, 1.5)
+        self.speed = float(max(0.0, min(120.0, float(self.speed) + acceleration)))
         
-        gyro = random.uniform(-0.5, 0.5)
-        self.heading = (self.heading + gyro * 5) % 360
+        gyro = random.uniform(-0.1, 0.1)
+        self.heading = (self.heading + gyro * 10) % 360
         
         return {
             "vehicle_id": self.vehicle_id,
@@ -44,29 +49,35 @@ class OBUSender:
             "speed": round(self.speed, 2),
             "heading": round(self.heading, 2),
             "acceleration": round(acceleration, 2),
-            "gyro": round(gyro, 2),
-            "timestamp": datetime.utcnow().isoformat()
+            "timestamp": datetime.utcnow().timestamp()
         }
 
     def run(self):
-        print(f"🚀 Starting OBU Telemetry Stream for Vehicle #{self.vehicle_id}")
-        print(f"Target API: {self.api_url}")
+        print(f"🚀 V2X Edge Node Started: {self.vehicle_id}")
+        print(f"📡 Target Uplink: {self.api_url}")
         
         while True:
             data = self.generate_mock_telemetry()
             try:
-                response = self.session.post(self.api_url, json=data, timeout=2)
+                # Use json=data to send as application/json
+                response = self.session.post(self.api_url, json=data, timeout=5)
+                
                 if response.status_code == 200:
-                    result = response.json()
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] OK | Status: {result['status']} | ID: {result['telemetry_id']}")
+                    res = response.json()
+                    status = res.get('status', 'OK')
+                    risk = res.get('risk_score', 0)
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Uplink OK | Risk: {risk:.2f} | Status: {status}")
+                elif response.status_code == 401:
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Auth Error: Check V2X_AUTH_TOKEN")
+                    time.sleep(10) # Back off on auth error
                 else:
-                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {response.status_code}")
+                    print(f"[{datetime.now().strftime('%H:%M:%S')}] Server Error: {response.status_code}")
             except requests.exceptions.RequestException as e:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] Connection failed: {e}")
-                time.sleep(2) # Wait before retry
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] Connectivity Loss: Retrying in 5s...")
+                time.sleep(5)
                 
             time.sleep(SEND_INTERVAL)
 
 if __name__ == "__main__":
-    sender = OBUSender(VEHICLE_ID, API_URL)
+    sender = OBUSender(VEHICLE_ID, API_URL, AUTH_TOKEN)
     sender.run()

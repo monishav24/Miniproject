@@ -27,14 +27,18 @@ export default function LatencyGraph({ latencyData = [] }) {
         labels,
         datasets: [
             {
-                label: 'Latency (ms)',
+                label: 'V2X Thread Latency (ms)',
                 data: values,
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderColor: '#22d3ee',
+                backgroundColor: 'rgba(34, 211, 238, 0.08)',
                 fill: true,
-                tension: 0.4,
+                tension: 0.5,
                 pointRadius: 0,
-                borderWidth: 2,
+                borderWidth: 3,
+                pointHoverRadius: 6,
+                pointHoverBackgroundColor: '#22d3ee',
+                pointHoverBorderColor: '#fff',
+                pointHoverBorderWidth: 2,
             },
         ],
     };

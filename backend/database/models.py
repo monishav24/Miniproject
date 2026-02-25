@@ -39,6 +39,10 @@ class Telemetry(Base):
     speed: Mapped[float] = mapped_column(Float)
     heading: Mapped[float] = mapped_column(Float)
     
+    # IMU Data
+    acceleration: Mapped[float] = mapped_column(Float, default=0.0)
+    gyro: Mapped[float] = mapped_column(Float, default=0.0)
+    
     # AI Scores
     collision_probability: Mapped[float] = mapped_column(Float, default=0.0)
     unsafe_score: Mapped[float] = mapped_column(Float, default=0.0)

@@ -24,16 +24,17 @@ function VehicleMarkers({ vehicles }) {
     return (
         <>
             {Object.values(vehicles).map((v) => {
-                const lat = v.position?.latitude || v.position?.lat || 0;
-                const lon = v.position?.longitude || v.position?.lon || 0;
+                const lat = v.last_telemetry?.latitude || 0;
+                const lon = v.last_telemetry?.longitude || 0;
                 if (!lat && !lon) return null;
 
-                const riskLevel = v.risk?.level || 'LOW';
+                const riskProb = v.last_telemetry?.collision_probability || 0;
+                const riskLevel = riskProb > 0.6 ? 'HIGH' : riskProb > 0.3 ? 'MEDIUM' : 'LOW';
                 const color = RISK_COLORS[riskLevel] || RISK_COLORS.LOW;
 
                 return (
                     <CircleMarker
-                        key={v.vehicle_id || v.id}
+                        key={v.id}
                         center={[lat, lon]}
                         radius={10}
                         pathOptions={{
@@ -46,15 +47,13 @@ function VehicleMarkers({ vehicles }) {
                     >
                         <Popup>
                             <div style={{ fontFamily: 'Inter, sans-serif', fontSize: 13 }}>
-                                <strong>{v.vehicle_id || 'Unknown'}</strong>
+                                <strong>{v.name}</strong>
                                 <br />
-                                Status: {v.status || 'N/A'}
+                                Speed: {v.last_telemetry?.speed || '0'} km/h
                                 <br />
-                                Risk: <span style={{ color, fontWeight: 600 }}>{riskLevel}</span>
+                                Risk: <span style={{ color, fontWeight: 600 }}>{riskLevel} ({Math.round(riskProb * 100)}%)</span>
                                 <br />
-                                Speed: {v.state?.speed?.toFixed(1) || '0'} m/s
-                                <br />
-                                Lat: {lat.toFixed(5)}, Lon: {lon.toFixed(5)}
+                                Last sync: {v.last_telemetry ? new Date(v.last_telemetry.timestamp).toLocaleTimeString() : 'N/A'}
                             </div>
                         </Popup>
                     </CircleMarker>

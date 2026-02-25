@@ -44,6 +44,10 @@ class TelemetryCreate(BaseModel):
     speed: float
     heading: float
 
+class TelemetryLive(TelemetryCreate):
+    acceleration: float
+    gyro: float
+
 class TelemetryOut(TelemetryCreate):
     id: int
     timestamp: datetime
@@ -55,6 +59,7 @@ class TelemetryOut(TelemetryCreate):
 class VehicleOut(VehicleBase):
     id: int
     created_at: datetime
+    last_telemetry: Optional[TelemetryOut] = None
     class Config:
         from_attributes = True
 
@@ -111,7 +116,26 @@ async def login(user_data: UserLogin, db: AsyncSession = Depends(get_session)):
 @router.get("/vehicles", response_model=List[VehicleOut])
 async def get_vehicles(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
     result = await db.execute(select(Vehicle).where(Vehicle.owner_id == current_user.id))
-    return result.scalars().all()
+    vehicles = result.scalars().all()
+    
+    vehicle_list = []
+    for v in vehicles:
+        # Get latest telemetry
+        t_result = await db.execute(
+            select(Telemetry)
+            .where(Telemetry.vehicle_id == v.id)
+            .order_by(Telemetry.timestamp.desc())
+            .limit(1)
+        )
+        last_t = t_result.scalars().first()
+        
+        # Pydantic will handle the conversion
+        v_out = VehicleOut.model_validate(v)
+        if last_t:
+            v_out.last_telemetry = TelemetryOut.model_validate(last_t)
+        vehicle_list.append(v_out)
+        
+    return vehicle_list
 
 @router.post("/vehicles", response_model=VehicleOut)
 async def add_vehicle(vehicle: VehicleCreate, current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):
@@ -126,11 +150,24 @@ async def add_vehicle(vehicle: VehicleCreate, current_user: User = Depends(get_c
     return new_vehicle
 
 # --- Telemetry & Analytics ---
+from fastapi import BackgroundTasks
 from backend.services.analytics import analytics_engine
+
+async def process_telemetry_ai(telemetry_id: int, db_session: AsyncSession, data_dict: dict):
+    # Calculate AI scores in background
+    scores = analytics_engine.calculate_risk_scores(data_dict)
+    
+    # Update record
+    result = await db_session.execute(select(Telemetry).where(Telemetry.id == telemetry_id))
+    telemetry = result.scalars().first()
+    if telemetry:
+        telemetry.collision_probability = scores["collision_probability"]
+        telemetry.unsafe_score = scores["unsafe_score"]
+        await db_session.commit()
 
 @router.post("/telemetry", response_model=TelemetryOut)
 async def ingest_telemetry(data: TelemetryCreate, db: AsyncSession = Depends(get_session)):
-    # Calculate AI scores
+    # Calculate AI scores (synchronous for /telemetry legacy)
     scores = analytics_engine.calculate_risk_scores(data.model_dump())
     
     new_telemetry = Telemetry(
@@ -141,6 +178,38 @@ async def ingest_telemetry(data: TelemetryCreate, db: AsyncSession = Depends(get
     await db.commit()
     await db.refresh(new_telemetry)
     return new_telemetry
+
+@router.post("/telemetry/live")
+async def ingest_live_telemetry(
+    data: TelemetryLive, 
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_session)
+):
+    """
+    Real-time hardware ingestion endpoint.
+    Returns immediately to the OBU while processing AI in background.
+    """
+    # Create record with 0 scores initially
+    new_telemetry = Telemetry(
+        **data.model_dump(),
+        collision_probability=0.0,
+        unsafe_score=0.0
+    )
+    db.add(new_telemetry)
+    await db.commit()
+    await db.refresh(new_telemetry)
+    
+    # Queue AI processing
+    background_tasks.add_task(process_telemetry_ai, new_telemetry.id, db, data.model_dump())
+    
+    # Quick risk estimate for immediate feedback (simplified)
+    quick_status = "safe" if data.speed < 80 and abs(data.acceleration) < 4 else "warning"
+    
+    return {
+        "telemetry_id": new_telemetry.id,
+        "status": quick_status,
+        "received_at": datetime.utcnow()
+    }
 
 @router.get("/dashboard/summary", response_model=VehicleStats)
 async def get_dashboard_summary(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_session)):

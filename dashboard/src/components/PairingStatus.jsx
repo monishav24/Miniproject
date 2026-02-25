@@ -19,20 +19,26 @@ export default function PairingStatus({ vehicles = {} }) {
     return (
         <div className="vehicle-list">
             {list.map((v) => {
-                const isOnline = v.status === 'online';
-                const riskLevel = (v.risk?.level || 'LOW').toUpperCase();
+                const isOnline = v.last_telemetry && (new Date() - new Date(v.last_telemetry.timestamp)) < 10000;
+                const riskLevel = (v.last_telemetry?.collision_probability > 0.6 ? 'HIGH' : 'LOW');
 
                 return (
-                    <div key={v.vehicle_id} className="vehicle-item">
+                    <div key={v.id} className="vehicle-item">
                         <div className="vehicle-info">
                             <div className={`vehicle-dot ${isOnline ? 'online' : 'offline'}`} />
                             <div>
-                                <div className="vehicle-name">{v.vehicle_id}</div>
+                                <div className="vehicle-name">{v.name}</div>
                                 <div className="vehicle-status">
-                                    {isOnline ? 'Online' : 'Offline'}
-                                    {v.device_name ? ` · ${v.device_name}` : ''}
+                                    {isOnline ? 'Live • ' : 'Last seen '}
+                                    {v.last_telemetry ? new Date(v.last_telemetry.timestamp).toLocaleTimeString() : 'Never'}
                                 </div>
                             </div>
+                        </div>
+                        <div className="vehicle-metrics" style={{ marginLeft: 'auto', textAlign: 'right', marginRight: '15px' }}>
+                            <div style={{ color: 'var(--accent-cyan)', fontWeight: 'bold' }}>
+                                {v.last_telemetry ? `${v.last_telemetry.speed} km/h` : '0 km/h'}
+                            </div>
+                            <div style={{ fontSize: '10px', color: 'var(--text-secondary)' }}>Speed</div>
                         </div>
                         <span className={`risk-badge ${riskLevel.toLowerCase()}`}>
                             {riskLevel}

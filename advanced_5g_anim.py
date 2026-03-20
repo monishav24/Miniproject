@@ -344,10 +344,17 @@ def update(frame):
 print("Rendering HD MP4 Video... (takes several minutes)")
 anim = FuncAnimation(fig, update, frames=FRAMES, interval=41) # ~24fps
 
+import shutil
+import warnings
+warnings.filterwarnings("ignore")
+
 try:
-    anim.save("5G_simulation.mp4", writer="ffmpeg", fps=24, dpi=120)
-    print("✓ Successfully created 5G_simulation.mp4")
+    if shutil.which("ffmpeg"):
+        anim.save("5G_simulation.mp4", writer="ffmpeg", fps=24, dpi=120)
+        print("✓ Successfully created 5G_simulation.mp4")
+    else:
+        print("⚠️ ffmpeg not installed on this system! Falling back to GIF generation.")
+        anim.save("5G_simulation.gif", writer="pillow", fps=15)
+        print("✓ Successfully saved 5G_simulation.gif (Fallback)")
 except Exception as e:
-    print(f"Error saving MP4: {e}")
-    anim.save("5G_simulation.gif", writer="pillow", fps=15)
-    print("✓ Fallback: Saved 5G_simulation.gif instead due to ffmpeg issue.")
+    print(f"❌ Error saving animation: {e}")

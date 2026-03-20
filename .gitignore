@@ -5,6 +5,10 @@ topology.json
 topology_static.json
 topology_predictive.json
 python_metrics.png
+latency_comparison.png
+energy_comparison.png
+sla_violation_comparison.png
+cost_trend.png
 flowmon*.xml
 static.xml
 predictive.xml

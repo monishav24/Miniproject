@@ -1,36 +1,37 @@
+"""
+evaluation.py
+Evaluates a UPF placement by computing latency, energy, and SLA violations.
+"""
 import networkx as nx
+
 
 def evaluate_placement(G, users, upfs):
     """
-    Evaluates the current placement strategy.
-    Calculates average latency, total energy consumed, and SLA violations.
+    For each user, finds the nearest UPF (shortest weighted path).
+    Returns: (avg_latency_ms, total_energy, sla_violation_count)
     """
-    total_latency = 0
+    total_latency = 0.0
     sla_violations = 0
-    # Base energy cost for active UPFs
-    energy = len(upfs) * 50 
-    
+    energy = len(upfs) * 50.0  # Base cost per active UPF
+
     for u in users:
-        # Find shortest path length to the nearest UPF
         min_dist = float('inf')
         for upf in upfs:
             try:
-                dist = nx.shortest_path_length(G, u.current_node, upf, weight='weight')
-                if dist < min_dist:
-                    min_dist = dist
+                d = nx.shortest_path_length(G, u.current_node, upf, weight='weight')
+                min_dist = min(min_dist, d)
             except nx.NetworkXNoPath:
                 pass
-        
+
         if min_dist == float('inf'):
-            min_dist = 100  # Penalty for unreachable node
-            
-        latency = min_dist * 2  # Assuming 2ms latency per unit weight
+            min_dist = 100  # Penalty for unreachable
+
+        latency = min_dist * 2.0  # 2 ms per weight unit
         total_latency += latency
-        
-        energy += latency * 0.1  # Distance-based transmission energy cost
-        
+        energy += latency * 0.1
+
         if latency > u.req_latency:
             sla_violations += 1
-            
+
     avg_latency = total_latency / max(1, len(users))
     return avg_latency, energy, sla_violations

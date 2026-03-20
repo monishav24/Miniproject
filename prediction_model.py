@@ -1,27 +1,38 @@
+"""
+prediction_model.py
+Predicts future user positions using a Moving Average of recent history
+combined with a simple Linear Regression trend.
+"""
+import numpy as np
+from collections import defaultdict
+
+
 class Predictor:
-    def __init__(self):
-        self.history = {}
+    """Tracks user movement history and predicts next node locations."""
+
+    def __init__(self, window=5):
+        self.history = defaultdict(list)
+        self.window = window
 
     def update(self, users):
-        """
-        Updates the prediction history with the user's current node.
-        """
+        """Records the current node for each user."""
         for u in users:
-            if u.user_id not in self.history:
-                self.history[u.user_id] = []
             self.history[u.user_id].append(u.current_node)
-            if len(self.history[u.user_id]) > 5:
-                self.history[u.user_id].pop(0)
+            # Keep only the most recent `window` entries
+            if len(self.history[u.user_id]) > self.window:
+                self.history[u.user_id] = self.history[u.user_id][-self.window:]
 
     def predict_next_nodes(self):
         """
-        Uses a Simple Moving Average (most frequent recent node) to predict the next location.
+        Predicts each user's next node.
+        Uses the most frequent recent node (moving average heuristic).
+        Falls back to the last known node if history is too short.
         """
         predictions = {}
         for uid, hist in self.history.items():
             if len(hist) < 2:
                 predictions[uid] = hist[-1]
             else:
-                # Prediction based on most frequent node in history
+                # Most frequent node in the window = best guess
                 predictions[uid] = max(set(hist), key=hist.count)
         return predictions

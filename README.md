@@ -1,102 +1,138 @@
 # Predictive Multi-UPF Dynamic Placement in 5G Core Networks
 
-**Latency- and Energy-Aware with QoS and Mobility Support**
+[![Simulation: ns-3](https://img.shields.io/badge/Simulation-ns--3-blue.svg)](https://www.nsnam.org/)
+[![Python: 3.8+](https://img.shields.io/badge/Python-3.8+-green.svg)](https://www.python.org/)
+[![Visualization: Matplotlib & NetAnim](https://img.shields.io/badge/Visualization-Matplotlib_%7C_NetAnim-orange.svg)]()
 
-A complete, runnable, end-to-end simulation system integrating:
-- Python-based control logic (placement algorithms, prediction, evaluation)
-- ns-3 network simulation (C++ with FlowMonitor)
-- NetAnim visualization (animated packet flow)
-- Automated execution pipeline (one command)
+This repository contains a complete, runnable, end-to-end framework for **Latency- and Energy-Aware Predictive Dynamic UPF (User Plane Function) Placement** in 5G Core Networks, featuring QoS (Quality of Service) and Mobility Support.
 
----
-
-## Quick Start
-
-### Prerequisites
-- **Python 3.8+** with packages: `pip install networkx matplotlib numpy`
-- **ns-3** installed at `~/ns-3-dev` (for packet-level simulation)
-- **NetAnim** installed at `~/ns-3-dev/netanim` (for animation)
-
-### Run Everything With ONE Command
-```bash
-python3 main.py
-```
-
-This automatically:
-1. Runs all 5 placement algorithms (Static, Random, Greedy, Predictive, Q-Learning)
-2. Simulates 30 nodes, 100 users, 5 UPFs, 200 time steps
-3. Exports `topology_static.json` and `topology_predictive.json`
-4. Copies `scratch/upf-sim.cc` to ns-3 and runs the simulation
-5. Generates `static.xml` and `predictive.xml` (NetAnim animations)
-6. Launches NetAnim automatically
-7. Parses `flowmon.xml` for ns-3 measured metrics
-8. Generates 4 comparison graphs (auto-opened)
-9. Prints a performance summary table with % improvements
-
-> **Note:** If ns-3 / NetAnim are not installed, the Python simulation still runs completely — ns-3 steps are gracefully skipped.
+## 📖 Table of Contents
+1. [Project Overview](#project-overview)
+2. [System Architecture](#system-architecture)
+3. [Implemented Algorithms](#implemented-algorithms)
+4. [Traffic & Mobility Models](#traffic--mobility-models)
+5. [Mathematical Formulation](#mathematical-formulation)
+6. [Simulation & Visualizations](#simulation--visualizations)
+7. [Installation & Requirements](#installation--requirements)
+8. [Usage & Execution](#usage--execution)
+9. [Project Structure](#project-structure)
 
 ---
 
-## Project Structure
-```
-├── main.py                  # One-command orchestrator
-├── network_model.py         # Barabási–Albert topology + JSON export
-├── traffic_model.py         # eMBB / URLLC / mMTC user generation
-├── mobility_model.py        # Random walk mobility
-├── cost_function.py         # C = αL + βE + γ·SLA
-├── prediction_model.py      # Moving Average prediction
-├── placement_algorithms.py  # Static, Random, Greedy, Predictive, Q-Learning
-├── evaluation.py            # Latency, energy, SLA metrics
-├── visualization.py         # 4 matplotlib comparison plots
-├── run_pipeline.py          # Optional helper (delegates to main.py)
-├── requirements.txt         # Python dependencies
-├── scratch/
-│   └── upf-sim.cc           # ns-3 C++ simulation script
-└── README.md
-```
+## 🔬 Project Overview
+In 5G and B5G (Beyond 5G) networks, the static placement of User Plane Functions (UPFs) leads to severe performance degradation as user density and mobility increase. This project simulates an intelligent, dynamic UPF placement system that continuously tracks mobile users and repositions UPFs to minimize latency, conserve operational energy, and prevent Service Level Agreement (SLA) violations.
 
-## Output Files (generated at runtime)
-| File | Description |
-|------|-------------|
-| `latency_comparison.png` | Latency over time for all algorithms |
-| `energy_comparison.png` | Energy consumption comparison |
-| `sla_violation_comparison.png` | SLA violation trends |
-| `cost_trend.png` | Composite cost (C = αL + βE + γ·SLA) |
-| `topology_static.json` | Static placement topology for ns-3 |
-| `topology_predictive.json` | Predictive placement topology for ns-3 |
-| `static.xml` | NetAnim animation (Static mode) |
-| `predictive.xml` | NetAnim animation (Predictive mode) |
-| `flowmon_static.xml` | FlowMonitor results (Static) |
-| `flowmon_predictive.xml` | FlowMonitor results (Predictive) |
-| `animate_5g_upf.py` | High-quality Python visualization script (academic demo) |
-| `5g_upf_snapshot.png`| High-res snapshot of the Python animation layout |
-| `advanced_5g_anim.py` | **ULTRA-REALISTIC HD MP4 Generator** with custom device icons & 100 moving users |
+This framework successfully bridges high-level AI/algorithmic control (Python) with packet-level discrete-event network simulation (C++ ns-3).
 
-## 🎥 Presentation Animations
+---
 
-### 1. Advanced HD Video (MP4 Output) - New!
+## 🏗 System Architecture
+The framework is divided into three major architectural components:
+
+1. **The Python Orchestrator (Controller):** 
+   Acts as the unified brain of the system. It generates the scale-free network topology (Barabási–Albert), initializes users, models their random walk mobility, predicts future demands using Moving Averages, and executes 5 different placement algorithms.
+2. **The ns-3 Simulation Engine:** 
+   A robust C++ script (`scratch/upf-sim.cc`) that takes the JSON topology generated by Python, constructs point-to-point links (100Mbps/5ms), injects UDP traffic to represent network demand, and tracks real-world packet flow using the `FlowMonitor` module.
+3. **The Presentation & Analytics Layer:**
+   A robust matplotlib graphing engine automatically compares performance across all 5 algorithms, while `advanced_5g_anim.py` constructs a realistic MP4 animation of the traffic.
+
+---
+
+## ⚙️ Implemented Algorithms
+The core comparison tests five distinct algorithms for UPF placement:
+
+1. **Static Placement (Baseline):** UPFs are placed at network nodes with the highest degree of betweenness centrality and remain fixed permanently.
+2. **Random Placement:** UPFs are randomly scattered across the network at each time step (worst-case baseline).
+3. **Greedy Placement:** UPFs dynamically migrate to nodes possessing the absolute highest concentration of users in the *current* time step.
+4. **Predictive Placement:** Utilizes historically-weighted moving averages to forecast where users *will be* in the next time step, placing UPFs preemptively.
+5. **Q-Learning (Reinforcement Learning):** An epsilon-greedy reinforcement learning agent that explores the network state space, learning optimal placement policies over time by maximizing rewards (minimizing the composite cost function).
+
+---
+
+## 📡 Traffic & Mobility Models
+The simulation supports three primary 5G network traffic slices, each triggering different SLA bounds:
+- **eMBB (Enhanced Mobile Broadband):** High bandwidth demand (e.g., streaming).
+- **URLLC (Ultra-Reliable Low-Latency Communication):** Extremely strict latency bounds (e.g., autonomous vehicles). Penalized heavily if latency spikes.
+- **mMTC (Massive Machine-Type Communication):** High density, low individual bandwidth (e.g., IoT sensors).
+
+**Mobility:** Users follow a **Random Walk** model traversing the network graph edges, mimicking urban mobile dynamics.
+
+---
+
+## 🧮 Mathematical Formulation
+The system optimizes a composite cost function:
+
+`C = αL + βE + γ·SLA`
+
+Where:
+- **L (Latency):** Average topological distance between users and their nearest assigned UPF.
+- **E (Energy):** Energy consumed dynamically via UPF migrations (reconfigurations) and active cloud processing.
+- **SLA (Service Level Agreement):** The percentage of users whose latency exceeds their specific slice threshold (e.g., URLLC users tolerate very little latency).
+- **α, β, γ:** Tunable weighting hyperparameters.
+
+---
+
+## 🎥 Simulation & Visualizations
+
+### 1. Advanced HD Video (MP4 Output)
 Run this inside WSL to generate a stunning 25-second MP4 video demonstrating the dynamic placement with 30 nodes, 100 moving users (eMBB, URLLC, mMTC), realistic cloud/server and device icons, and a real-time metrics dashboard:
 ```bash
 python3 advanced_5g_anim.py
 ```
-*(Note: Requires `ffmpeg` to be installed on your system or WSL).*
+*(Requires `ffmpeg` installed on your system or WSL to output MP4 videos).*
 
-### 2. Interactive Matplotlib Animation
-In addition to the core Pipeline, we have provided an interactive animated visualization tailored for technical presentations.
-Simply run:
+### 2. ns-3 NetAnim Simulation
+If ns-3 is configured, the orchestrator generates `.xml` traces for the native `NetAnim` tool. UPFs are colored **RED** and Users/Routers are colored **BLUE**.
+
+---
+
+## 💻 Installation & Requirements
+
+### 1. Prerequisites
+- **Python 3.8+**
+- Packages: `pip install networkx matplotlib numpy Pillow`
+
+### 2. ns-3 Integration (Optional but recommended)
+To utilize the packet-level C++ simulation:
+- Install **ns-3** (tested with ns-3.37+) in `~/ns-3-dev`.
+- Ensure **NetAnim** is compiled and located at `~/ns-3-dev/netanim/NetAnim`.
+- The system automatically detects WSL (Ubuntu) and runs the C++ engine if available. If ns-3 is missing, Python gracefully skips packet simulation and still successfully plots all high-level analytical metrics.
+
+---
+
+## 🚀 Usage & Execution
+
+**Run the Entire Simulation Pipeline With ONE Command:**
 ```bash
-python3 animate_5g_upf.py
+python3 main.py
 ```
-This renders a stunning dark-themed, 4-stage explanatory animation of the dynamic UPF traffic, packet flows, metric graphs, and dynamic SLA optimization.
 
-## NetAnim Visualization
-- **RED nodes** = UPFs (User Plane Functions)
-- **BLUE nodes** = Users / Routers
-- Packet flow is animated between nodes
+**This orchestrator automatically:**
+1. Generates 200 time steps of network data.
+2. Evaluates all 5 placement algorithms.
+3. Exports `topology_static.json` and `topology_predictive.json`.
+4. Copies `upf-sim.cc` to your ns-3 scratch folder and invokes `./ns3 run`.
+5. Compiles FlowMonitor data and outputs NetAnim traces.
+6. Auto-generates and displays 4 PNG benchmark graphs (`latency_comparison.png`, `cost_trend.png`, etc.).
+7. Prints a beautifully formatted terminal summary table with percentage improvements.
 
-## Algorithms Compared
-1. **Static** — UPFs placed at highest betweenness centrality nodes (once)
-2. **Random** — UPFs placed at random nodes each step
-3. **Greedy** — UPFs placed where most users currently are
-4. **Predictive** — UPFs placed where users are predicted to move
-5. **Q-Learning** — Reinforcement learning agent optimizes placement over time
+---
+
+## 📁 Project Structure
+
+```text
+├── main.py                  # Single-command pipeline orchestrator
+├── network_model.py         # Barabási–Albert graph topology generator
+├── traffic_model.py         # eMBB, URLLC, mMTC traffic slice definitions
+├── mobility_model.py        # Simulated user mobility (Random Walk)
+├── prediction_model.py      # Moving average location predictor
+├── placement_algorithms.py  # Placements: Static, Random, Greedy, Predictive, Q-Learning
+├── evaluation.py            # Calculates total cost, energy, and SLA violations
+├── visualization.py         # Auto-generates comparative matplotlib charts
+├── cost_function.py         # Cost equation formulation
+├── advanced_5g_anim.py      # Generates Real-time Ultra-Realistic MP4 animation
+├── requirements.txt         # PyPI dependencies
+├── scratch/
+│   └── upf-sim.cc           # C++ NS-3 Discrete Event Simulation script
+└── README.md                # This file
+```

@@ -68,6 +68,16 @@ This automatically:
 | `predictive.xml` | NetAnim animation (Predictive mode) |
 | `flowmon_static.xml` | FlowMonitor results (Static) |
 | `flowmon_predictive.xml` | FlowMonitor results (Predictive) |
+| `animate_5g_upf.py` | High-quality Python visualization script (academic demo) |
+| `5g_upf_snapshot.png`| High-res snapshot of the Python animation layout |
+
+## Presentation Animation
+In addition to the core Pipeline, we have provided a high-quality animated visualization tailored for technical presentations.
+Simply run:
+```bash
+python3 animate_5g_upf.py
+```
+This renders a stunning dark-themed, 4-stage explanatory animation of the dynamic UPF traffic, packet flows, metric graphs, and dynamic SLA optimization.
 
 ## NetAnim Visualization
 - **RED nodes** = UPFs (User Plane Functions)

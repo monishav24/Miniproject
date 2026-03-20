@@ -70,9 +70,19 @@ This automatically:
 | `flowmon_predictive.xml` | FlowMonitor results (Predictive) |
 | `animate_5g_upf.py` | High-quality Python visualization script (academic demo) |
 | `5g_upf_snapshot.png`| High-res snapshot of the Python animation layout |
+| `advanced_5g_anim.py` | **ULTRA-REALISTIC HD MP4 Generator** with custom device icons & 100 moving users |
 
-## Presentation Animation
-In addition to the core Pipeline, we have provided a high-quality animated visualization tailored for technical presentations.
+## 🎥 Presentation Animations
+
+### 1. Advanced HD Video (MP4 Output) - New!
+Run this inside WSL to generate a stunning 25-second MP4 video demonstrating the dynamic placement with 30 nodes, 100 moving users (eMBB, URLLC, mMTC), realistic cloud/server and device icons, and a real-time metrics dashboard:
+```bash
+python3 advanced_5g_anim.py
+```
+*(Note: Requires `ffmpeg` to be installed on your system or WSL).*
+
+### 2. Interactive Matplotlib Animation
+In addition to the core Pipeline, we have provided an interactive animated visualization tailored for technical presentations.
 Simply run:
 ```bash
 python3 animate_5g_upf.py

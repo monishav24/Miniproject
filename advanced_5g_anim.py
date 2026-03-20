@@ -92,10 +92,10 @@ if os.path.exists("topology_predictive.json"):
     print("Loading topology from topology_predictive.json...")
     with open("topology_predictive.json", "r") as f:
         data = json.load(f)
-    for node_id in data["nodes"]:
-        G.add_node(int(node_id))
-    for link in data["links"]:
-        G.add_edge(int(link[0]), int(link[1]))
+    for n_data in data.get("nodes", []):
+        G.add_node(int(n_data["id"]))
+    for e_data in data.get("edges", data.get("links", [])):
+        G.add_edge(int(e_data["source"]), int(e_data["target"]))
     N_NODES = len(G.nodes)
 else:
     print("JSON not found. Generating default topology...")

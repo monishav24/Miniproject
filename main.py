@@ -12,6 +12,12 @@ Features:
   • Console metrics every second
 """
 
+# FIX: Import asyncio so we can create a dedicated event loop inside the
+# capture thread.  On Windows, background threads have NO default event loop;
+# PyShark's sniff_continuously() relies on asyncio internally, so without
+# this fix it raises "There is no current event loop in thread …".
+import asyncio
+import subprocess
 import threading
 import time
 import random
@@ -27,6 +33,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
+
 
 # ─────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -182,24 +189,85 @@ def compute_metrics(G: nx.Graph, upf_node: int) -> tuple:
 # ─────────────────────────────────────────────────────────────────
 # TRAFFIC SOURCE THREADS
 # ─────────────────────────────────────────────────────────────────
-def try_live_capture() -> bool:
-    """Return interface name if pyshark live capture works, else ''."""
+def detect_interface() -> str:
+    """
+    FIX: Use `tshark -D` to list available capture interfaces and
+    automatically pick the first one that looks like Wi-Fi or Ethernet.
+    This is more reliable than guessing the name from IFACE_CANDIDATES
+    because on Windows the interface name visible to tshark/pyshark often
+    differs from the friendly name shown in Network Settings.
+
+    Returns the tshark interface name (e.g. "\\Device\\NPF_{GUID}") or the
+    first candidate from IFACE_CANDIDATES that tshark lists, so pyshark can
+    use it directly.
+    """
     try:
-        import pyshark  # noqa: F401
-        for iface in IFACE_CANDIDATES:
-            try:
-                cap = pyshark.LiveCapture(interface=iface, bpf_filter="ip")
-                cap.close()
-                print(f"[INFO] Live capture interface found: {iface}")
+        # Run tshark -D to enumerate capture-capable interfaces.
+        # The output lines look like:
+        #   1. \Device\NPF_{GUID} (Wi-Fi)
+        #   2. \Device\NPF_{GUID} (Ethernet)
+        result = subprocess.run(
+            ["tshark", "-D"],
+            capture_output=True, text=True, timeout=10
+        )
+        lines = result.stdout.strip().splitlines()
+        preferred = ["wi-fi", "wifi", "wlan", "wireless", "ethernet", "eth"]
+        for line in lines:
+            lower = line.lower()
+            # Pick the first interface whose friendly name matches a preferred keyword
+            for kw in preferred:
+                if kw in lower:
+                    # Extract the interface token (second word after the index)
+                    parts = line.split(None, 1)
+                    if len(parts) >= 2:
+                        iface = parts[1].split(" (")[0].strip()
+                        print(f"[INFO] Auto-detected capture interface: {iface} ({line.strip()})")
+                        return iface
+        # Fallback: return the very first interface tshark found
+        if lines:
+            parts = lines[0].split(None, 1)
+            if len(parts) >= 2:
+                iface = parts[1].split(" (")[0].strip()
+                print(f"[INFO] No preferred interface found; using first: {iface}")
                 return iface
-            except Exception:
-                continue
+    except FileNotFoundError:
+        print("[WARN] tshark not found in PATH. Falling back to candidate list.")
+    except Exception as e:
+        print(f"[WARN] Interface detection failed ({e}). Falling back to candidate list.")
+
+    # Last resort: try the hard-coded friendly names (works when Wireshark
+    # is installed and the names match exactly).
+    return IFACE_CANDIDATES[0] if IFACE_CANDIDATES else ""
+
+
+def try_live_capture() -> str:
+    """
+    Return the interface name to use for live capture, or '' on failure.
+    We no longer do a probe open/close here because that probe itself can
+    trigger the asyncio error (it runs in the main thread before a loop
+    exists for the background thread).  Instead we just confirm pyshark is
+    importable and let detect_interface() find the right adapter.
+    """
+    try:
+        import pyshark  # noqa: F401  – just verify it is installed
     except ImportError:
         print("[WARN] pyshark not installed. Using simulation mode.")
-    return ""
+        return ""
+
+    iface = detect_interface()
+    if iface:
+        print(f"[INFO] Live capture will use interface: {iface}")
+    return iface
 
 
 def live_capture_thread(iface: str):
+    # FIX: Windows background threads have no asyncio event loop by default.
+    # PyShark uses asyncio internally (via its TSharkCrashException / async
+    # packet-reading machinery).  We must create a NEW event loop and make it
+    # the "current" loop for this thread BEFORE calling any pyshark API.
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     try:
         import pyshark
         cap = pyshark.LiveCapture(interface=iface, bpf_filter="ip")
@@ -229,6 +297,9 @@ def live_capture_thread(iface: str):
         with STATE.lock:
             STATE.live_capture = False
         simulated_traffic_thread()
+    finally:
+        # Clean up the event loop we created for this thread.
+        loop.close()
 
 
 def simulated_traffic_thread():

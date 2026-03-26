@@ -42,14 +42,12 @@ NODE_TYPES = {
     7: "Core",
     8: "Core",
     9: "Core",
-    10: "Core",
-    11: "Core",
 }
 
 EDGE_LIST = [
     (0, 3), (1, 3), (2, 4), (3, 6), (3, 7),
-    (4, 7), (4, 8), (5, 8), (5, 9), (6, 10),
-    (7, 10), (8, 11), (9, 11), (10, 11),
+    (4, 7), (4, 8), (5, 8), (5, 9), (6, 9),
+    (7, 9), (8, 9),
 ]
 
 def build_graph() -> nx.Graph:
@@ -263,7 +261,7 @@ def simulation_loop(stop_event: threading.Event):
 # API Endpoints
 # ---------------------------------------------------------------------------
 
-@app.post("/start")
+@app.post("/start_capture")
 def start_simulation():
     if state.running:
         return {"status": "already running"}
@@ -293,7 +291,7 @@ def start_simulation():
     return {"status": "started", "interface": iface or "simulation", "live": bool(iface)}
 
 
-@app.post("/stop")
+@app.post("/stop_capture")
 def stop_simulation():
     if not state.running:
         return {"status": "not running"}

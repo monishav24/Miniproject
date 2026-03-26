@@ -53,7 +53,7 @@ export default function App() {
 
   const handleStart = async () => {
     try {
-      await fetch(`${API}/start`, { method: 'POST' });
+      await fetch(`${API}/start_capture`, { method: 'POST' });
       setRunning(true);
       setError('');
     } catch {
@@ -63,7 +63,7 @@ export default function App() {
 
   const handleStop = async () => {
     try {
-      await fetch(`${API}/stop`, { method: 'POST' });
+      await fetch(`${API}/stop_capture`, { method: 'POST' });
       setRunning(false);
     } catch {
       setError('Failed to stop.');

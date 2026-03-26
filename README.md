@@ -40,7 +40,7 @@ Open [http://localhost:5173](http://localhost:5173)
 |---|---|
 | Live Traffic | pyshark LiveCapture from Wi-Fi / Ethernet |
 | Fallback | Synthetic oscillating traffic if capture fails |
-| Network Model | 12-node graph (gNB → MEC → Core) via NetworkX |
+| Network Model | 10-node graph (gNB → MEC → Core) via NetworkX |
 | Static UPF | Fixed at Node 6 |
 | Dynamic UPF | Minimum-cost placement updated every second |
 | Dashboard | Force-directed graph + 4 live Recharts panels |
@@ -57,7 +57,7 @@ Open [http://localhost:5173](http://localhost:5173)
 
 | Endpoint | Method | Description |
 |---|---|---|
-| `/start` | POST | Start simulation + live capture |
-| `/stop` | POST | Stop simulation |
+| `/start_capture` | POST | Start simulation + live capture |
+| `/stop_capture` | POST | Stop simulation |
 | `/data` | GET | Current state (JSON) |
 | `/health` | GET | Health check |

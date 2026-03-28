@@ -1,355 +1,342 @@
 """
-Real-Time Dynamic UPF Placement in 5G Core
-Backend: FastAPI + pyshark (Wireshark live traffic) + NetworkX
+Temporal Network Analysis Platform — FastAPI Backend
 """
-
 import asyncio
+import json
 import time
-import random
-import threading
-from collections import deque
-from datetime import datetime
-from typing import Optional
+from contextlib import asynccontextmanager
+from typing import Any, Dict, List, Optional
 
-import networkx as nx
-import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
+from pydantic import BaseModel
 
-app = FastAPI(title="5G UPF Placement API")
+from backend.collector.traffic_generator import TrafficCollector, NODE_META
+from backend.database.db import (
+    init_db, save_snapshot, get_snapshot, list_snapshots,
+    get_timeline, tag_snapshot, list_experiments
+)
+from backend.replay_engine.replay import replay_engine
+from backend.simulation_engine.simulator import simulate_alternatives, get_architecture_recommendation
+from backend.prediction_engine.predictor import get_predictor
+from backend.analysis_engine.rca import analyze_root_causes
+from backend.analysis_engine.fingerprint import (
+    generate_fingerprint, fingerprint_similarity,
+    fingerprint_evolution, detect_anomaly
+)
+from backend.analysis_engine.recommender import generate_recommendations
+from backend.experiment_runner.runner import run_experiment_suite
+
+# ─── Globals ─────────────────────────────────────────────────────────────────
+collector    = TrafficCollector(interval=1.0)
+predictor    = get_predictor(list(NODE_META.keys()))
+_fingerprint_history: List[str] = []
+_connected_ws: List[WebSocket] = []
+_latest_snapshot: Optional[dict] = None
+_rca_cache: List[dict] = []
+_alerts: List[dict]    = []
+
+
+async def _broadcast(data: dict):
+    dead = []
+    for ws in _connected_ws:
+        try:
+            await ws.send_text(json.dumps(data))
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _connected_ws.remove(ws)
+
+
+def _on_snapshot(snap: dict):
+    global _latest_snapshot, _rca_cache
+
+    # Persist every 5th tick to avoid DB bloat
+    if snap["tick"] % 5 == 0:
+        save_snapshot(snap, tag="auto")
+
+    # Prediction ingestion
+    predictor.ingest_snapshot(snap)
+
+    # RCA (every 3 ticks)
+    if snap["tick"] % 3 == 0:
+        _rca_cache = analyze_root_causes(snap)
+
+    # Fingerprint history
+    _fingerprint_history.append(snap["fingerprint"])
+    if len(_fingerprint_history) > 200:
+        _fingerprint_history.pop(0)
+
+    # Alerts
+    global _alerts
+    new_alerts = []
+    for cause in _rca_cache:
+        if cause.get("confidence", 0) > 0.7:
+            new_alerts.append({
+                "tick":        snap["tick"],
+                "timestamp":   time.time(),
+                "type":        cause["cause"],
+                "severity":    cause.get("severity", "medium"),
+                "confidence":  cause["confidence"],
+                "description": cause["description"],
+            })
+    if new_alerts:
+        _alerts = (new_alerts + _alerts)[:50]
+
+    _latest_snapshot = snap
+
+    # Broadcast via WebSocket (schedule coroutine thread-safely)
+    payload = {
+        "type":    "snapshot",
+        "data":    snap,
+        "rca":     _rca_cache[:3],
+        "alerts":  _alerts[:5],
+    }
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(_broadcast(payload), loop)
+    except RuntimeError:
+        pass
+
+
+# ─── App lifecycle ────────────────────────────────────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    collector.add_callback(_on_snapshot)
+    collector.start()
+    yield
+    collector.stop()
+
+
+app = FastAPI(
+    title="Temporal Network Analysis Platform",
+    description="Research prototype for telecom temporal network analysis",
+    version="1.0.0",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# Network Graph
-# ---------------------------------------------------------------------------
 
-NODE_TYPES = {
-    0: "gNB",   # 5G base-station
-    1: "gNB",
-    2: "gNB",
-    3: "MEC",   # Mobile Edge Computing
-    4: "MEC",
-    5: "MEC",
-    6: "Core",  # Core network node
-    7: "Core",
-    8: "Core",
-    9: "Core",
-}
-
-EDGE_LIST = [
-    (0, 3), (1, 3), (2, 4), (3, 6), (3, 7),
-    (4, 7), (4, 8), (5, 8), (5, 9), (6, 9),
-    (7, 9), (8, 9),
-]
-
-def build_graph() -> nx.Graph:
-    G = nx.Graph()
-    for n, ntype in NODE_TYPES.items():
-        G.add_node(n, type=ntype, latency=0.0, energy=0.0, load=0.0)
-    for u, v in EDGE_LIST:
-        G.add_edge(u, v,
-                   latency=round(random.uniform(1, 8), 2),
-                   energy=round(random.uniform(0.5, 3.0), 2))
-    return G
-
-# ---------------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------------
-
-class SimState:
-    def __init__(self):
-        self.G: nx.Graph = build_graph()
-        self.running = False
-        self.traffic_load = 0.0
-        self.packet_rate = 0.0
-        self.avg_pkt_size = 0.0
-        self.upf_node_dynamic = 6
-        self.upf_node_static = 6        # static UPF fixed at node 6
-        self.latency_dynamic = 0.0
-        self.latency_static = 0.0
-        self.energy_dynamic = 0.0
-        self.energy_static = 0.0
-        self.improvement = 0.0
-        self.history_latency: deque = deque(maxlen=60)
-        self.history_energy: deque = deque(maxlen=60)
-        self.history_packet_rate: deque = deque(maxlen=60)
-        self.history_improvement: deque = deque(maxlen=60)
-        self.timestamp = 0
-        self._lock = threading.Lock()
-        self.capture_thread: Optional[threading.Thread] = None
-        self.sim_thread: Optional[threading.Thread] = None
-        self.use_live_capture = False
-        self._stop_event = threading.Event()
-
-state = SimState()
-
-# ---------------------------------------------------------------------------
-# pyshark live capture (with fallback)
-# ---------------------------------------------------------------------------
-
-def get_default_interface() -> str:
-    """Try common interface names; fall back gracefully."""
-    candidates = ["Wi-Fi", "WiFi", "wlan0", "eth0", "Ethernet", "en0", "en1"]
+# ─── WebSocket ────────────────────────────────────────────────────────────────
+@app.websocket("/ws")
+async def websocket_endpoint(ws: WebSocket):
+    await ws.accept()
+    _connected_ws.append(ws)
     try:
-        import pyshark
-        for iface in candidates:
+        # Send initial state
+        if _latest_snapshot:
+            await ws.send_text(json.dumps({
+                "type": "snapshot",
+                "data": _latest_snapshot,
+                "rca":  _rca_cache[:3],
+                "alerts": _alerts[:5],
+            }))
+        while True:
+            await asyncio.sleep(0.5)
+            msg = await asyncio.wait_for(ws.receive_text(), timeout=0.1)
+            # Handle client control messages
             try:
-                cap = pyshark.LiveCapture(interface=iface, bpf_filter="ip", output_file=None)
-                cap.close()
-                return iface
+                cmd = json.loads(msg)
+                if cmd.get("action") == "surge":
+                    collector.trigger_surge(duration=cmd.get("duration", 15))
+                    await ws.send_text(json.dumps({"type": "ack", "action": "surge"}))
             except Exception:
-                continue
-    except ImportError:
+                pass
+    except (WebSocketDisconnect, asyncio.TimeoutError):
         pass
-    return ""
-
-def live_capture_loop(iface: str, stop_event: threading.Event):
-    """Background thread: capture packets and update state every second."""
-    try:
-        import pyshark
-        cap = pyshark.LiveCapture(interface=iface, bpf_filter="ip")
-        bucket_count = 0
-        bucket_size = 0
-        bucket_start = time.time()
-
-        for pkt in cap.sniff_continuously():
-            if stop_event.is_set():
-                cap.close()
-                break
-            now = time.time()
-            bucket_count += 1
-            try:
-                bucket_size += int(pkt.length)
-            except Exception:
-                bucket_size += 64
-
-            if now - bucket_start >= 1.0:
-                pkt_rate = bucket_count / (now - bucket_start)
-                avg_size = bucket_size / max(bucket_count, 1)
-                with state._lock:
-                    state.packet_rate = round(pkt_rate, 2)
-                    state.avg_pkt_size = round(avg_size, 1)
-                    state.traffic_load = round(min(pkt_rate / 50.0, 1.0) * 10.0, 2)
-                bucket_count = 0
-                bucket_size = 0
-                bucket_start = now
-    except Exception as e:
-        print(f"[pyshark] capture failed: {e}. Falling back to simulation.")
-        with state._lock:
-            state.use_live_capture = False
-
-def simulated_traffic_loop(stop_event: threading.Event):
-    """Fallback: generate synthetic traffic that oscillates."""
-    t = 0
-    while not stop_event.is_set():
-        t += 1
-        # Simulate realistic traffic wave
-        base = 5 + 3 * np.sin(t * 0.2)
-        spike = random.uniform(0, 4) if random.random() > 0.8 else 0
-        pkt_rate = max(0, base + spike + random.gauss(0, 0.5))
-        avg_size = random.uniform(200, 1400)
-        with state._lock:
-            state.packet_rate = round(pkt_rate, 2)
-            state.avg_pkt_size = round(avg_size, 1)
-            state.traffic_load = round(min(pkt_rate / 20.0, 1.0) * 10.0, 2)
-        time.sleep(1.0)
-
-# ---------------------------------------------------------------------------
-# UPF Placement Algorithms
-# ---------------------------------------------------------------------------
-
-def node_cost(G: nx.Graph, node: int, traffic_load: float) -> float:
-    """Compute total cost for placing UPF at a given node."""
-    # Sum edge latencies + energy for shortest paths from gNB nodes
-    gnb_nodes = [n for n, d in G.nodes(data=True) if d["type"] == "gNB"]
-    total_lat = 0.0
-    total_eng = 0.0
-    for gNB in gnb_nodes:
-        try:
-            path = nx.shortest_path(G, source=gNB, target=node, weight="latency")
-            for i in range(len(path) - 1):
-                e = G.edges[path[i], path[i+1]]
-                total_lat += e["latency"]
-                total_eng += e["energy"]
-        except nx.NetworkXNoPath:
-            total_lat += 999
-    load_factor = traffic_load * 0.5
-    return total_lat + total_eng + load_factor
-
-def static_placement(G: nx.Graph) -> int:
-    return state.upf_node_static  # always node 6
-
-def dynamic_placement(G: nx.Graph, traffic_load: float) -> int:
-    """Choose the node with minimum total cost (excluding gNB nodes)."""
-    candidates = [n for n, d in G.nodes(data=True) if d["type"] in ("MEC", "Core")]
-    best = min(candidates, key=lambda n: node_cost(G, n, traffic_load))
-    return best
-
-def compute_metrics(G: nx.Graph, upf_node: int) -> tuple:
-    """Return (latency, energy) for the current UPF placement."""
-    gnb_nodes = [n for n, d in G.nodes(data=True) if d["type"] == "gNB"]
-    total_lat = 0.0
-    total_eng = 0.0
-    for gNB in gnb_nodes:
-        try:
-            path = nx.shortest_path(G, source=gNB, target=upf_node, weight="latency")
-            for i in range(len(path) - 1):
-                e = G.edges[path[i], path[i+1]]
-                total_lat += e["latency"]
-                total_eng += e["energy"]
-        except nx.NetworkXNoPath:
-            total_lat += 999
-    return round(total_lat, 2), round(total_eng, 2)
-
-# ---------------------------------------------------------------------------
-# Simulation loop
-# ---------------------------------------------------------------------------
-
-def simulation_loop(stop_event: threading.Event):
-    while not stop_event.is_set():
-        with state._lock:
-            tl = state.traffic_load
-            G = state.G
-
-        # Slightly randomize edge weights over time (network dynamics)
-        for u, v in G.edges():
-            G.edges[u, v]["latency"] = round(
-                max(0.5, G.edges[u, v]["latency"] + random.gauss(0, 0.3)), 2)
-            G.edges[u, v]["energy"] = round(
-                max(0.1, G.edges[u, v]["energy"] + random.gauss(0, 0.1)), 2)
-
-        upf_dyn = dynamic_placement(G, tl)
-        upf_stat = static_placement(G)
-
-        lat_dyn, eng_dyn = compute_metrics(G, upf_dyn)
-        lat_stat, eng_stat = compute_metrics(G, upf_stat)
-
-        # Scale metrics slightly with traffic load
-        lat_dyn = round(lat_dyn + tl * 0.3, 2)
-        lat_stat = round(lat_stat + tl * 0.8, 2)  # static suffers more under load
-        eng_dyn = round(eng_dyn + tl * 0.1, 2)
-        eng_stat = round(eng_stat + tl * 0.2, 2)
-
-        improvement = 0.0
-        if lat_stat > 0:
-            improvement = round(((lat_stat - lat_dyn) / lat_stat) * 100, 1)
-
-        with state._lock:
-            state.upf_node_dynamic = upf_dyn
-            state.latency_dynamic = lat_dyn
-            state.latency_static = lat_stat
-            state.energy_dynamic = eng_dyn
-            state.energy_static = eng_stat
-            state.improvement = improvement
-            state.timestamp += 1
-            state.history_latency.append({"t": state.timestamp, "dynamic": lat_dyn, "static": lat_stat})
-            state.history_energy.append({"t": state.timestamp, "dynamic": eng_dyn, "static": eng_stat})
-            state.history_packet_rate.append({"t": state.timestamp, "value": state.packet_rate})
-            state.history_improvement.append({"t": state.timestamp, "value": improvement})
-
-        time.sleep(1.0)
-
-# ---------------------------------------------------------------------------
-# API Endpoints
-# ---------------------------------------------------------------------------
-
-@app.post("/start_capture")
-def start_simulation():
-    if state.running:
-        return {"status": "already running"}
-
-    state._stop_event.clear()
-    state.running = True
-
-    # Try live capture first
-    iface = get_default_interface()
-    if iface:
-        state.use_live_capture = True
-        t = threading.Thread(target=live_capture_loop, args=(iface, state._stop_event), daemon=True)
-        state.capture_thread = t
-        t.start()
-        print(f"[INFO] Live capture started on: {iface}")
-    else:
-        state.use_live_capture = False
-        t = threading.Thread(target=simulated_traffic_loop, args=(state._stop_event,), daemon=True)
-        state.capture_thread = t
-        t.start()
-        print("[INFO] No live interface found. Using simulated traffic.")
-
-    sim_t = threading.Thread(target=simulation_loop, args=(state._stop_event,), daemon=True)
-    state.sim_thread = sim_t
-    sim_t.start()
-
-    return {"status": "started", "interface": iface or "simulation", "live": bool(iface)}
+    except Exception:
+        pass
+    finally:
+        if ws in _connected_ws:
+            _connected_ws.remove(ws)
 
 
-@app.post("/stop_capture")
-def stop_simulation():
-    if not state.running:
-        return {"status": "not running"}
-    state._stop_event.set()
-    state.running = False
-    return {"status": "stopped"}
+# ─── Snapshot APIs ────────────────────────────────────────────────────────────
+@app.get("/api/snapshot/latest")
+def get_latest():
+    if _latest_snapshot is None:
+        raise HTTPException(404, "No snapshot yet")
+    return _latest_snapshot
 
 
-@app.get("/data")
-def get_data():
-    with state._lock:
-        G = state.G
-        nodes = [
-            {
-                "id": n,
-                "type": d["type"],
-                "load": round(state.traffic_load * random.uniform(0.5, 1.0), 2),
-            }
-            for n, d in G.nodes(data=True)
-        ]
-        edges = [
-            {
-                "source": u,
-                "target": v,
-                "latency": d["latency"],
-                "energy": d["energy"],
-            }
-            for u, v, d in G.edges(data=True)
-        ]
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "upf_node": state.upf_node_dynamic,
-            "upf_node_static": state.upf_node_static,
-            "traffic_load": state.traffic_load,
-            "packet_rate": state.packet_rate,
-            "avg_pkt_size": state.avg_pkt_size,
-            "latency": state.latency_dynamic,
-            "latency_static": state.latency_static,
-            "energy": state.energy_dynamic,
-            "energy_static": state.energy_static,
-            "improvement": state.improvement,
-            "timestamp": state.timestamp,
-            "running": state.running,
-            "live_capture": state.use_live_capture,
-            "history": {
-                "latency": list(state.history_latency),
-                "energy": list(state.history_energy),
-                "packet_rate": list(state.history_packet_rate),
-                "improvement": list(state.history_improvement),
-            },
-        }
+@app.get("/api/snapshot/{snap_id}")
+def get_snap(snap_id: int):
+    s = get_snapshot(snap_id)
+    if not s:
+        raise HTTPException(404, "Snapshot not found")
+    return s
 
 
-@app.get("/health")
+@app.get("/api/snapshots")
+def list_snaps(limit: int = 100, offset: int = 0):
+    return list_snapshots(limit=limit, offset=offset)
+
+
+@app.get("/api/timeline")
+def timeline(limit: int = 200):
+    return get_timeline(limit=limit)
+
+
+class TagRequest(BaseModel):
+    label: str
+    tag: str = "manual"
+
+
+@app.post("/api/snapshot/{snap_id}/tag")
+def tag_snap(snap_id: int, req: TagRequest):
+    tag_snapshot(snap_id, req.label, req.tag)
+    return {"ok": True}
+
+
+# ─── Replay APIs ──────────────────────────────────────────────────────────────
+@app.get("/api/replay/go/{snap_id}")
+def replay_go(snap_id: int):
+    s = replay_engine.go_to_snapshot(snap_id)
+    if not s:
+        raise HTTPException(404, "Snapshot not found")
+    return s
+
+
+@app.get("/api/replay/rewind")
+def replay_rewind(steps: int = 1):
+    s = replay_engine.rewind(steps=steps)
+    return s or {}
+
+
+@app.get("/api/replay/forward")
+def replay_forward(steps: int = 1):
+    s = replay_engine.fast_forward(steps=steps)
+    return s or {}
+
+
+@app.get("/api/replay/start")
+def replay_start():
+    return replay_engine.go_to_start() or {}
+
+
+@app.get("/api/replay/end")
+def replay_end():
+    return replay_engine.go_to_end() or {}
+
+
+@app.get("/api/replay/compare/{id_a}/{id_b}")
+def replay_compare(id_a: int, id_b: int):
+    return replay_engine.compare(id_a, id_b)
+
+
+@app.get("/api/replay/status")
+def replay_status():
+    return {
+        "cursor":  replay_engine.cursor_position,
+        "total":   replay_engine.get_total(),
+    }
+
+
+# ─── Simulation APIs ──────────────────────────────────────────────────────────
+@app.get("/api/simulate/alternatives")
+def simulate():
+    if _latest_snapshot is None:
+        raise HTTPException(503, "Waiting for first snapshot")
+    alts = simulate_alternatives(_latest_snapshot)
+    rec  = get_architecture_recommendation(alts)
+    return {"alternatives": alts, "recommendation": rec}
+
+
+# ─── Prediction APIs ──────────────────────────────────────────────────────────
+@app.get("/api/predict")
+def predict():
+    result = predictor.predict()
+    hotspots = predictor.get_hotspots(threshold=0.6)
+    return {**result, "hotspots": hotspots}
+
+
+# ─── Analysis APIs ────────────────────────────────────────────────────────────
+@app.get("/api/rca")
+def rca():
+    if _latest_snapshot is None:
+        raise HTTPException(503, "Waiting for first snapshot")
+    causes = analyze_root_causes(_latest_snapshot)
+    return {"causes": causes, "tick": _latest_snapshot["tick"]}
+
+
+@app.get("/api/rca/snapshot/{snap_id}")
+def rca_snapshot(snap_id: int):
+    s = get_snapshot(snap_id)
+    if not s:
+        raise HTTPException(404, "Snapshot not found")
+    topo = s["topology"]
+    snap_view = {
+        "nodes": topo.get("nodes", []),
+        "edges": topo.get("edges", []),
+        "metrics": s["metrics"],
+        "tick": s["tick"],
+    }
+    return {"causes": analyze_root_causes(snap_view)}
+
+
+@app.get("/api/fingerprint")
+def fingerprint_status():
+    fp = _latest_snapshot["fingerprint"] if _latest_snapshot else "none"
+    anomaly = detect_anomaly(fp, _fingerprint_history[:-1])
+    evolution = fingerprint_evolution(_fingerprint_history)
+    return {
+        "current":   fp,
+        "anomaly":   anomaly,
+        "evolution": evolution,
+    }
+
+
+@app.get("/api/recommend")
+def recommend():
+    if _latest_snapshot is None:
+        raise HTTPException(503, "Waiting for first snapshot")
+    alts   = simulate_alternatives(_latest_snapshot)
+    causes = analyze_root_causes(_latest_snapshot)
+    recs   = generate_recommendations(_latest_snapshot, causes, alts)
+    return {"recommendations": recs}
+
+
+# ─── Experiment APIs ──────────────────────────────────────────────────────────
+@app.post("/api/experiment/run")
+async def run_experiment(background_tasks: BackgroundTasks):
+    if _latest_snapshot is None:
+        raise HTTPException(503, "Waiting for first snapshot")
+    snap = dict(_latest_snapshot)
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, run_experiment_suite, snap)
+    return result
+
+
+@app.get("/api/experiments")
+def get_experiments(limit: int = 20):
+    return list_experiments(limit=limit)
+
+
+# ─── Control APIs ─────────────────────────────────────────────────────────────
+@app.post("/api/control/surge")
+def trigger_surge(duration: int = 15):
+    collector.trigger_surge(duration=duration)
+    return {"ok": True, "duration": duration}
+
+
+@app.get("/api/alerts")
+def get_alerts():
+    return {"alerts": _alerts[:20]}
+
+
+@app.get("/api/health")
 def health():
-    return {"status": "ok"}
-
-
-if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    return {
+        "status":     "ok",
+        "tick":       _latest_snapshot["tick"] if _latest_snapshot else 0,
+        "live":       collector.live_capture,
+        "ws_clients": len(_connected_ws),
+    }

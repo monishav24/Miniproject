@@ -152,7 +152,7 @@ export default function TopologyView({ snapshot, prediction, showHeatmap }: Prop
         return base;
       })
       .attr('stroke', d => NODE_COLORS[d.type] || '#3b9eff')
-      .attr('stroke-width', d.load > 0.8 ? 2.5 : 1.5)
+      .attr('stroke-width', d => d.load > 0.8 ? 2.5 : 1.5)
       .attr('opacity', d => 0.8 + d.load * 0.2);
 
     nodeSel.exit().remove();
